@@ -39,7 +39,7 @@ A desktop application that provides real-time translation of selected screen are
 
 1. Start the application:
    ```
-   python translator.py
+   python Translator.py
    ```
 
 2. Select the source language (English or Japanese) and target language (Traditional Chinese or English).
