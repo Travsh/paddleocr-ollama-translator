@@ -1,23 +1,21 @@
 import sys
-import json
 import requests
 import time
 from PyQt6.QtWidgets import QApplication, QMainWindow, QPushButton, QComboBox, QVBoxLayout, QWidget, QLabel, QTextEdit, QHBoxLayout, QSpinBox
-from PyQt6.QtCore import QTimer, QRect, QBuffer, Qt, QPoint, QSize, pyqtSignal
-from PyQt6.QtGui import QScreen, QPixmap, QColor, QGuiApplication, QPainter, QPen, QFont
+from PyQt6.QtCore import QTimer, QRect, Qt, QPoint, pyqtSignal
+from PyQt6.QtGui import QColor, QGuiApplication, QPainter, QPen
 import numpy as np
 import torch
 from paddleocr import PaddleOCR
 from PIL import Image
-import io
-from datetime import datetime
 import mss
 import ctypes
 import os
+import ollama
 
 # Global variables
-OLLAMA_API_URL = "http://localhost:11434"
-CAPTURE_INTERVAL = 200  # milliseconds
+# OLLAMA_API_URL = "http://localhost:11434"
+CAPTURE_INTERVAL = 250  # milliseconds
 
 class TransparentOverlay(QWidget):
     selection_made = pyqtSignal(QRect)
@@ -138,13 +136,6 @@ class TranslatorApp(QMainWindow):
         self.sct = mss.mss()
         self.scaling_factor = self.get_scaling_factor()
         print(f"Display scaling factor: {self.scaling_factor}")
-
-        # Language code mapping
-        self.lang_code_map = {
-            "English": "eng",
-            "Japanese": "jpn",
-            "Traditional Chinese": "cmn_Hant"
-        }
         
     def get_scaling_factor(self):
         user32 = ctypes.windll.user32
@@ -204,10 +195,8 @@ class TranslatorApp(QMainWindow):
 
     def update_model_list(self):
         try:
-            response = requests.get(f"{OLLAMA_API_URL}/api/tags")
-            response.raise_for_status()
-            data = response.json()
-            model_names = [model['name'] for model in data['models']]
+            models = ollama.list()
+            model_names = [model['name'] for model in models['models']]
             self.model_combo.clear()
             self.model_combo.addItems(model_names)
             default_model = "gemma2:latest"
@@ -288,7 +277,7 @@ class TranslatorApp(QMainWindow):
         
         start_time = time.time()
         
-        result = self.translate_text_ollama(text, target_language)
+        result = self.translate_text_ollama_lib(text, target_language)
         
         end_time = time.time()
         translation_time = end_time - start_time
@@ -296,42 +285,34 @@ class TranslatorApp(QMainWindow):
         print(f"Origin: {text}\nTranslated: {result}\nTranslation time: {translation_time:.2f} seconds")
         
         return result
-
-    def translate_text_ollama(self, text, target_language):
-        url = f"{OLLAMA_API_URL}/api/chat"
+        
+    def translate_text_ollama_lib(self, text, target_language):
         model = self.model_combo.currentText()
         
-        payload = json.dumps({
-            "model": model,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": "You are an AI specialized in translating text into high-quality, grammatically correct sentences in the specified target language. You will receive a text string and a target language code. Your task is to translate the text into the target language, ensuring the translation is fluent and grammatically accurate. Drop meaningless character or symbol. Do not provide any comment on the result. Just return the translation."
-                },
-                {
-                    "role": "user",
-                    "content": f"Please translate the following text to {target_language} with high-quality grammar: {text}"
-                }
-            ],
-            "stream": False,
-            "options": {
-                "temperature": 0.1,
-                "num_ctx": 2048,
-            }
-        })
-        
-        headers = {
-            'Content-Type': 'application/json'
-        }
-        
         try:
-            response = requests.post(url, headers=headers, data=payload)
-            # response.raise_for_status()
-            return response.json()['message']['content']
-        except requests.exceptions.RequestException as e:
-            print(f"Error in API request: {e}")
+            response = ollama.chat(
+                model=model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": f"Translate the following {self.source_language_combo.currentText()} text to {target_language}. Maintain accuracy and natural phrasing. Only return the translated text, without any additional explanation or commentary."
+                    },
+                    {
+                        "role": "user",
+                        "content": text
+                    }
+                ],
+                options={
+                    "temperature": 0.3,
+                    "num_ctx": 1024
+                }
+            )
+            
+            return response['message']['content']
+        except Exception as e:
+            print(f"Error in Ollama API request: {e}")
             return f"Translation failed. Error: {str(e)}"
-
+    
 def main():
     app = QApplication(sys.argv)
     translator = TranslatorApp()
