@@ -18,7 +18,7 @@ A desktop application that provides real-time translation of selected screen are
 
 ## Demo
 
-[Watch the demo video](/demo_images/demo.mp4)
+[Watch the demo video](https://github.com/user-attachments/assets/59162290-eb71-488f-8524-6df8a9ffa9f0.mp4)
 
 ## Requirements
 
