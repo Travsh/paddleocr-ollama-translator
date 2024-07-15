@@ -2,12 +2,11 @@ import sys
 import json
 import requests
 import time
-from PyQt6.QtWidgets import QApplication, QMainWindow, QPushButton, QComboBox, QVBoxLayout, QHBoxLayout, QWidget, QLabel, QTextEdit, QSpinBox
+from PyQt6.QtWidgets import QApplication, QMainWindow, QPushButton, QComboBox, QVBoxLayout, QWidget, QLabel, QTextEdit, QHBoxLayout, QSpinBox
 from PyQt6.QtCore import QTimer, QRect, QBuffer, Qt, QPoint, QSize, pyqtSignal
 from PyQt6.QtGui import QScreen, QPixmap, QColor, QGuiApplication, QPainter, QPen, QFont
 import numpy as np
 import torch
-import easyocr
 from paddleocr import PaddleOCR
 from PIL import Image
 import io
@@ -15,6 +14,10 @@ from datetime import datetime
 import mss
 import ctypes
 import os
+
+# Global variables
+OLLAMA_API_URL = "http://localhost:11434"
+CAPTURE_INTERVAL = 200  # milliseconds
 
 class TransparentOverlay(QWidget):
     selection_made = pyqtSignal(QRect)
@@ -128,14 +131,21 @@ class TranslatorApp(QMainWindow):
         
         os.environ['KMP_DUPLICATE_LIB_OK']='True'
         
-        # Initialize PaddleOCR reader by default
-        self.paddleocr_reader = PaddleOCR(use_angle_cls=True, lang='en', use_gpu=self.gpu_available)
-        self.easyocr_reader = None  # Initialize only when needed
-        
+        # Initialize PaddleOCR reader
+        self.paddleocr_reader = None
+        self.update_reader(self.source_language_combo.currentText())
+
         self.sct = mss.mss()
         self.scaling_factor = self.get_scaling_factor()
         print(f"Display scaling factor: {self.scaling_factor}")
 
+        # Language code mapping
+        self.lang_code_map = {
+            "English": "eng",
+            "Japanese": "jpn",
+            "Traditional Chinese": "cmn_Hant"
+        }
+        
     def get_scaling_factor(self):
         user32 = ctypes.windll.user32
         user32.SetProcessDPIAware()
@@ -143,7 +153,7 @@ class TranslatorApp(QMainWindow):
 
     def initUI(self):
         self.setWindowTitle('Real-time Translator')
-        self.setGeometry(0, 0, 300, 350)  # Increased height for new elements
+        self.setGeometry(0, 0, 300, 200)
 
         layout = QVBoxLayout()
 
@@ -168,16 +178,10 @@ class TranslatorApp(QMainWindow):
         layout.addWidget(self.source_language_combo)
 
         self.target_language_combo = QComboBox(self)
-        self.target_language_combo.addItems(['繁體中文', 'English'])
+        self.target_language_combo.addItems(['Traditional Chinese', 'English'])
         layout.addWidget(QLabel('Target Language:'))
         layout.addWidget(self.target_language_combo)
 
-        self.ocr_method_combo = QComboBox(self)
-        self.ocr_method_combo.addItems(['PaddleOCR', 'EasyOCR'])
-        layout.addWidget(QLabel('OCR Method:'))
-        layout.addWidget(self.ocr_method_combo)
-
-        # Model selection dropdown
         self.model_combo = QComboBox(self)
         self.update_model_list()
         layout.addWidget(QLabel('Translation Model:'))
@@ -191,9 +195,16 @@ class TranslatorApp(QMainWindow):
         container.setLayout(layout)
         self.setCentralWidget(container)
 
+    def update_reader(self, language):
+        if language == 'English':
+            self.paddleocr_reader = PaddleOCR(use_angle_cls=True, lang='en', use_gpu=True, show_log=False)
+        elif language == 'Japanese':
+            self.paddleocr_reader = PaddleOCR(use_angle_cls=True, lang='japan', use_gpu=True, show_log=False)
+        print(f"PaddleOCR reader updated for {language}")
+
     def update_model_list(self):
         try:
-            response = requests.get("http://localhost:11434/api/tags")
+            response = requests.get(f"{OLLAMA_API_URL}/api/tags")
             response.raise_for_status()
             data = response.json()
             model_names = [model['name'] for model in data['models']]
@@ -208,15 +219,6 @@ class TranslatorApp(QMainWindow):
             print(f"Error fetching model list: {e}")
             self.model_combo.clear()
             self.model_combo.addItem("gemma2:latest")
-
-    def update_reader(self, language):
-        if self.ocr_method_combo.currentText() == 'PaddleOCR':
-            lang = 'en' if language == 'English' else 'japan'
-            self.paddleocr_reader = PaddleOCR(use_angle_cls=True, lang=lang, use_gpu=self.gpu_available)
-        else:  # EasyOCR
-            lang = ['en'] if language == 'English' else ['ja']
-            self.easyocr_reader = easyocr.Reader(lang, gpu=self.gpu_available)
-        print(f"OCR reader updated for {language} using {self.ocr_method_combo.currentText()}")
 
     def start_area_selection(self):
         self.overlay.show()
@@ -239,7 +241,7 @@ class TranslatorApp(QMainWindow):
         
         # Set translation window size and position
         translation_width = int(physical_rect.width() * 0.9 / scale_factor)  # 90% of the selected area width
-        translation_height = 300  # Increased from 200 to 300
+        translation_height = 200  # Changed from 300 to 200
         translation_x = int((physical_rect.left() + physical_rect.width() / 2) / scale_factor - translation_width / 2)
         translation_y = int(physical_rect.bottom() / scale_factor + 10)  # Moved closer to the selected area
         
@@ -252,28 +254,18 @@ class TranslatorApp(QMainWindow):
                 img = Image.frombytes("RGB", screenshot.size, screenshot.rgb)
                 img_np = np.array(img)
                 
-                ocr_method = self.ocr_method_combo.currentText()
-                
-                if ocr_method == 'EasyOCR':
-                    if self.easyocr_reader is None:
-                        self.update_reader(self.source_language_combo.currentText())
-                    result = self.easyocr_reader.readtext(img_np)
-                    text = ' '.join([res[1] for res in result]) if result else ""
-                else:  # PaddleOCR
-                    result = self.paddleocr_reader.ocr(img_np, cls=True)
-                    text = ' '.join([line[1][0] for line in result[0]]) if result and result[0] else ""
-                
-                print(f"Extracted text: {text}")
-                
+                result = self.paddleocr_reader.ocr(img_np, cls=True)
+                text = ' '.join([line[1][0] for line in result[0]]) if result and result[0] else ""
+                # print(f"Extracted text: {text}")
                 if text and text != self.previous_text:
                     self.previous_text = text
                     translated_text = self.translate_text(text)
                     self.translation_window.setText(translated_text)
-                elif not text:
-                    print("No text detected in the image")
-                    self.translation_window.setText("No text detected")
-                else:
-                    print("No new text detected")
+                # elif not text:
+                #     print("No text detected in the image")
+                #     self.translation_window.setText("No text detected")
+                # else:
+                #     print("No new text detected")
             except Exception as e:
                 print(f"Error in capture_and_translate: {e}")
                 self.translation_window.setText(f"Error: {str(e)}")
@@ -292,8 +284,21 @@ class TranslatorApp(QMainWindow):
                 print("Please select an area first")
 
     def translate_text(self, text):
-        url = "http://localhost:11434/api/chat"
-        target_language = "Traditional Chinese" if self.target_language_combo.currentText() == '繁體中文' else "English"
+        target_language = self.target_language_combo.currentText()
+        
+        start_time = time.time()
+        
+        result = self.translate_text_ollama(text, target_language)
+        
+        end_time = time.time()
+        translation_time = end_time - start_time
+        
+        print(f"Origin: {text}\nTranslated: {result}\nTranslation time: {translation_time:.2f} seconds")
+        
+        return result
+
+    def translate_text_ollama(self, text, target_language):
+        url = f"{OLLAMA_API_URL}/api/chat"
         model = self.model_combo.currentText()
         
         payload = json.dumps({
@@ -310,7 +315,8 @@ class TranslatorApp(QMainWindow):
             ],
             "stream": False,
             "options": {
-                "temperature": 0.1
+                "temperature": 0.1,
+                "num_ctx": 2048,
             }
         })
         
@@ -318,20 +324,13 @@ class TranslatorApp(QMainWindow):
             'Content-Type': 'application/json'
         }
         
-        start_time = time.time()
         try:
             response = requests.post(url, headers=headers, data=payload)
-            response.raise_for_status()
-            translated_text = response.json()['message']['content']
+            # response.raise_for_status()
+            return response.json()['message']['content']
         except requests.exceptions.RequestException as e:
             print(f"Error in API request: {e}")
-            translated_text = f"Translation failed. Error: {str(e)}"
-        end_time = time.time()
-        
-        translation_time = end_time - start_time
-        print(f"Translation took {translation_time:.2f} seconds")
-        
-        return translated_text
+            return f"Translation failed. Error: {str(e)}"
 
 def main():
     app = QApplication(sys.argv)
