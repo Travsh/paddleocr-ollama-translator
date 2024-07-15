@@ -230,10 +230,24 @@ class TranslatorApp(QMainWindow):
         
         # Set translation window size and position
         translation_width = int(physical_rect.width() * 0.9 / scale_factor)  # 90% of the selected area width
-        translation_height = 200  # Changed from 300 to 200
+        translation_height = 200
         translation_x = int((physical_rect.left() + physical_rect.width() / 2) / scale_factor - translation_width / 2)
-        translation_y = int(physical_rect.bottom() / scale_factor + 10)  # Moved closer to the selected area
-        
+        translation_y = int(physical_rect.bottom() / scale_factor + 10)  # Initial position below the selected area
+
+        # Get the screen size
+        screen = QApplication.primaryScreen().geometry()
+
+        # Check if the translation window goes beyond the screen bottom
+        if translation_y + translation_height > screen.height():
+            # If it does, place it above the selected area instead
+            translation_y = int(physical_rect.top() / scale_factor - translation_height - 10)
+
+        # Ensure the window is not positioned off the top of the screen
+        translation_y = max(0, translation_y)
+
+        # Ensure the window is not positioned off the sides of the screen
+        translation_x = max(0, min(translation_x, screen.width() - translation_width))
+
         self.translation_window.setGeometry(translation_x, translation_y, translation_width, translation_height)
 
     def capture_and_translate(self):
