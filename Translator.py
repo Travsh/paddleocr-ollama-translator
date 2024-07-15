@@ -3,7 +3,7 @@ import requests
 import time
 from PyQt6.QtWidgets import QApplication, QMainWindow, QPushButton, QComboBox, QVBoxLayout, QWidget, QLabel, QTextEdit, QHBoxLayout, QSpinBox
 from PyQt6.QtCore import QTimer, QRect, Qt, QPoint, pyqtSignal
-from PyQt6.QtGui import QColor, QGuiApplication, QPainter, QPen
+from PyQt6.QtGui import QColor, QGuiApplication, QPainter, QPen, QFont
 import numpy as np
 import torch
 from paddleocr import PaddleOCR
@@ -73,31 +73,37 @@ class TranslationWindow(QWidget):
         super().__init__()
         self.setWindowFlags(
             Qt.WindowType.WindowStaysOnTopHint | 
-            Qt.WindowType.FramelessWindowHint
+            Qt.WindowType.FramelessWindowHint |
+            Qt.WindowType.Tool
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)  # Prevents the window from stealing focus
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        
         self.layout = QVBoxLayout()
-        self.text_edit = QTextEdit()
-        self.text_edit.setReadOnly(True)
-        self.text_edit.setStyleSheet("""
-            QTextEdit {
-                background-color: rgba(0, 0, 0, 180);
-                color: white;
-                border: 5px solid white;
-                border-radius: 10px;
-                padding: 10px;
-                font-size: 30px;
-            }
+        self.layout.setContentsMargins(0, 0, 0, 0)  # Remove layout margins
+        
+        self.label = QLabel()
+        self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.label.setStyleSheet("""
+            background-color: rgba(0, 0, 0, 180);
+            color: white;
+            border-radius: 10px;
+            padding: 10px;
+            font-size: 24px;
         """)
-        self.layout.addWidget(self.text_edit)
+        font = QFont()
+        font.setPointSize(14)
+        self.label.setFont(font)
+        
+        self.layout.addWidget(self.label)
         self.setLayout(self.layout)
+        
         self.dragging = False
         self.offset = QPoint()
 
     def setText(self, text):
-        self.text_edit.setText(text)
-        self.raise_()  # Ensures the window stays on top after updating text
+        self.label.setText(text)
+        self.adjustSize()  # Adjust window size to fit content
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -227,28 +233,32 @@ class TranslatorApp(QMainWindow):
             "height": physical_rect.height()
         }
         self.choose_area_btn.setText(f"Selected Area: {physical_rect.width()}x{physical_rect.height()}")
-        
-        # Set translation window size and position
-        translation_width = int(physical_rect.width() * 0.9 / scale_factor)  # 90% of the selected area width
-        translation_height = 200
-        translation_x = int((physical_rect.left() + physical_rect.width() / 2) / scale_factor - translation_width / 2)
-        translation_y = int(physical_rect.bottom() / scale_factor + 10)  # Initial position below the selected area
 
         # Get the screen size
         screen = QApplication.primaryScreen().geometry()
 
-        # Check if the translation window goes beyond the screen bottom
-        if translation_y + translation_height > screen.height():
-            # If it does, place it above the selected area instead
-            translation_y = int(physical_rect.top() / scale_factor - translation_height - 10)
+        # Set initial position and size for translation window
+        translation_width = int(physical_rect.width() * 0.9)  # 90% of the selected area width
+        translation_height = 200  # Fixed height, adjust as needed
+        translation_x = physical_rect.left() + (physical_rect.width() - translation_width) // 2
+        
+        # Check if there's enough space below the selected area
+        if physical_rect.bottom() + translation_height + 10 <= screen.height():
+            translation_y = physical_rect.bottom() + 10  # 10 pixels below the selected area
+        else:
+            # If not enough space below, place it above the selected area
+            translation_y = physical_rect.top() - translation_height - 10
 
-        # Ensure the window is not positioned off the top of the screen
-        translation_y = max(0, translation_y)
+        # Ensure the window is not positioned off the screen
+        translation_x = max(0, translation_x)
+        translation_y = max(0, min(translation_y, screen.height() - translation_height))
 
-        # Ensure the window is not positioned off the sides of the screen
-        translation_x = max(0, min(translation_x, screen.width() - translation_width))
-
+        # Set the geometry of the translation window
         self.translation_window.setGeometry(translation_x, translation_y, translation_width, translation_height)
+        self.translation_window.show()
+
+        # Clear any existing text
+        self.translation_window.setText("")
 
     def capture_and_translate(self):
         if self.selected_area:
